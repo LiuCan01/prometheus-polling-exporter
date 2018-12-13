@@ -5,28 +5,80 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"os"
 	"os/exec"
+	"strings"
 )
 
-var f1 int = 6
+var ceph_status_code int = 0
+var ceph_status_checks_end string = ""
 
 //this function needs to be add in cron
-func HaConfig() {
-	var whoami []byte
+func Get_ceph_health_metric() {
+	src_replace := []string{
+		"Degraded data redundancy:",
+		"Degraded data redundancy (low space)",
+		"Reduced data availability:",
+		"backfillfull osd(s)",
+		"nearfull osd(s)",
+		" full osd(s)",
+		"osds down"}
+
+	dst_replacement := []string{
+		"Degraded data redundancy",
+		"Degraded data redundancy (low space)",
+		"Reduced data availability",
+		"Exist backfillfull osd(s)",
+		"Exist nearfull osd(s)",
+		"Exist full osd(s)",
+		"Exist osds down"}
+
+	var std_out []byte
+	var ceph_health string
 	var err error
 	var cmd *exec.Cmd
-	//The command you want to exec
-	cmd = exec.Command("pwd")
-	if whoami, err = cmd.Output(); err != nil {
+	cmd = exec.Command("ceph","health")
+	if std_out, err = cmd.Output(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	f1 = f1 + 1
-	//res := string(whoami)
-	fmt.Println(string(whoami))
+	ceph_health = string(std_out)
+	ceph_status := "HEALTH_OK"
+	ceph_status_checks_end = ""
+	status_index := strings.Index(ceph_health, " ")
+        if status_index != -1 {	
+		ceph_status = ceph_health[0:status_index] 
+	}
+	if "HEALTH_WARN" == ceph_status {
+		ceph_status_code = 1
+	}else if "HEALTH_ERR" == ceph_status {
+		ceph_status_code = 2
+	}else{
+		ceph_status_code = 0
+		return 
+	}
+
+	ceph_status_checks := ceph_health[status_index+1:]
+
+	sub_str := strings.Split(ceph_status_checks, ";")
+
+	for i:=0; i < len(sub_str); i++{
+		flag_tmp := 0
+		for j:=0; j < len(src_replace); j++{
+			if strings.Contains(sub_str[i], src_replace[j]){
+				flag_tmp = 1
+				ceph_status_checks_end +=  dst_replacement[j]
+				break
+			}
+		}
+		if flag_tmp == 0 {
+			ceph_status_checks_end += strings.TrimSpace(sub_str[i])
+		}
+		if i != len(sub_str)-1 {
+			ceph_status_checks_end += "; "
+		}
+	}
 }
 
 type ClusterManager struct {
-	Zone         string
 	OOMCountDesc *prometheus.Desc
 	// ... many more fields
 }
@@ -37,8 +89,7 @@ func (c *ClusterManager) ReallyExpensiveAssessmentOfTheSystemState() (
 
 	oomCountByHost = map[string]int{
 		//one metric name with different lables
-		"foo.example.org": f1,
-		"bar.example.org": 2001,
+		ceph_status_checks_end : ceph_status_code,
 	}
 	return
 }
@@ -68,14 +119,13 @@ func (c *ClusterManager) Collect(ch chan<- prometheus.Metric) {
 // host. Since all Descs created in this way are consistent across instances,
 // with a guaranteed distinction by the "zone" label, we can register different
 // ClusterManager instances with the same registry.
-func NewClusterManager(zone string) *ClusterManager {
+func NewClusterManager() *ClusterManager {
 	return &ClusterManager{
-		Zone: zone,
 		OOMCountDesc: prometheus.NewDesc(
-			"clustermanager_oom_crashes_total",
-			"Number of OOM crashes.",
-			[]string{"host"},
-			prometheus.Labels{"zone": zone},
+			"ecms_ceph_health_status",
+			"",
+			[]string{"checks"},
+			prometheus.Labels{"ceph": ""},
 		),
 	}
 }
