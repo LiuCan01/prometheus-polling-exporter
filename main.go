@@ -26,13 +26,13 @@ func main() {
         fmt.Println("Error", err)
     }
 
-    workerDB := metric.NewClusterManager("db")
+    workerDB := metric.NewClusterManager()
 
     //one minute collect the metrics
     ticker := time.NewTicker(time.Minute * time.Duration(conf.Time_interval))
     go func() {
         for _ = range ticker.C {
-            metric.HaConfig()
+            metric.Get_ceph_health_metric()
         }
     }()
 
